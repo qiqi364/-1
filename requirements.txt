@@ -1,0 +1,7 @@
+pyulog>=1.12
+pymavlink>=2.4.38
+pandas>=2.0
+matplotlib>=3.7
+plotly>=5.18
+streamlit>=1.30
+numpy>=1.24
