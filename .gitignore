@@ -1,38 +1,9 @@
-﻿# Virtual environment
-.venv/
+﻿.venv/
 venv/
-env/
-
-# Python
 __pycache__/
-*.py[cod]
-*.class
-*.so
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
+*.pyc
+*.pyo
 .DS_Store
-Thumbs.db
-
-# Streamlit
-.streamlit/
-*.streamlit
-
-# Data
-*.bin
-*.ulg
 *.log
-samples/*.bin
-samples/*.ulg
-
-# Output
-*.png
-*.pdf
-
-# Vercel (if used)
+.env
 .vercel

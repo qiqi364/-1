@@ -1,0 +1,9 @@
+﻿services:
+  - type: web
+    name: dronelog-analyzer
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run mvp/app.py --server.port 
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0

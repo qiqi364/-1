@@ -1,0 +1,1 @@
+﻿web: streamlit run mvp/app.py --server.port 

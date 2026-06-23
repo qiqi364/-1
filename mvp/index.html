@@ -1,0 +1,170 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>无人机飞行日志分析器</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"Microsoft YaHei","PingFang SC",sans-serif;background:#f0f2f5;color:#333}
+.header{background:linear-gradient(135deg,#1a73e8,#0d47a1);color:#fff;padding:20px 32px;text-align:center}
+.header h1{font-size:22px;margin-bottom:4px}
+.header p{font-size:13px;opacity:.85}
+.container{max-width:1100px;margin:0 auto;padding:20px}
+.drop-zone{border:2px dashed #b0bec5;border-radius:12px;padding:40px 20px;text-align:center;background:#fff;cursor:pointer;transition:all .2s;margin-bottom:20px}
+.drop-zone:hover,.drop-zone.dragover{border-color:#1a73e8;background:#e3f2fd}
+.drop-icon{font-size:40px;margin-bottom:8px}
+.drop-text{font-size:15px;color:#555}
+.drop-hint{font-size:12px;color:#999;margin-top:6px}
+.file-info{background:#fff;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:none;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.file-info.show{display:flex;align-items:center;gap:12px}
+.file-name{font-weight:600;color:#1a73e8}
+.file-meta{font-size:12px;color:#888}
+.badge{background:#e8f5e9;color:#2e7d32;padding:2px 8px;border-radius:10px;font-size:11px}
+.loading{text-align:center;padding:30px;display:none}
+.loading.show{display:block}
+.spinner{width:36px;height:36px;border:3px solid #e0e0e0;border-top-color:#1a73e8;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.results{display:none}
+.results.show{display:block}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.stat-card{background:#fff;border-radius:8px;padding:14px 16px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.stat-label{font-size:11px;color:#888;text-transform:uppercase}
+.stat-value{font-size:22px;font-weight:700;color:#1a73e8;margin-top:2px}
+.stat-unit{font-size:12px;color:#888;font-weight:400}
+.chart-box{background:#fff;border-radius:8px;padding:16px;margin-bottom:16px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.chart-title{font-size:14px;font-weight:600;margin-bottom:12px;color:#333;border-left:3px solid #1a73e8;padding-left:8px}
+canvas{width:100%!important;height:250px!important}
+.export-btn{background:#1a73e8;color:#fff;border:none;padding:10px 24px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:500}
+.export-btn:hover{background:#1565c0}
+.error-box{background:#ffebee;color:#c62828;padding:12px 16px;border-radius:8px;margin-bottom:16px;display:none}
+.error-box.show{display:block}
+</style>
+</head>
+<body>
+<div class="header">
+<h1>飞行日志分析器</h1>
+<p>支持 APM/ArduPilot .bin .log 格式</p>
+</div>
+<div class="container">
+<div class="drop-zone" id="dropZone">
+<div class="drop-icon">📁</div>
+<div class="drop-text">拖拽飞行日志到这里，或点击选择文件</div>
+<div class="drop-hint">支持 .bin (APM), .log (PX4), .ulg (PX4 ULog)</div>
+<input type="file" id="fileInput" accept=".bin,.log,.ulg" style="display:none">
+</div>
+<div class="file-info" id="fileInfo">
+<span class="file-name" id="fileName"></span>
+<span class="file-meta" id="fileSize"></span>
+<span class="badge" id="fileType"></span>
+</div>
+<div class="loading" id="loading">
+<div class="spinner"></div>
+<div>正在解析飞行日志...</div>
+</div>
+<div class="error-box" id="errorMsg"></div>
+<div class="results" id="results">
+<div class="stats" id="statsGrid"></div>
+<div class="chart-box">
+<div class="chart-title">姿态数据（滚转/俯仰/偏航）</div>
+<canvas id="attitudeChart"></canvas>
+</div>
+<div class="chart-box">
+<div class="chart-title">电池电压</div>
+<canvas id="voltageChart"></canvas>
+</div>
+<div class="chart-box">
+<div class="chart-title">高度变化</div>
+<canvas id="altitudeChart"></canvas>
+</div>
+<div style="text-align:center;margin-top:16px">
+<button class="export-btn" id="exportBtn">📄 导出CSV报告</button>
+</div>
+</div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+let charts={},parsedData=null;
+const dz=document.getElementById("dropZone"),fi=document.getElementById("fileInput"),
+fx=document.getElementById("fileInfo"),lo=document.getElementById("loading"),
+er=document.getElementById("errorMsg"),rs=document.getElementById("results");
+dz.onclick=()=>fi.click();
+dz.ondragover=e=>{e.preventDefault();dz.classList.add("dragover")};
+dz.ondragleave=()=>dz.classList.remove("dragover");
+dz.ondrop=e=>{e.preventDefault();dz.classList.remove("dragover");if(e.dataTransfer.files.length)process(e.dataTransfer.files[0])};
+fi.onchange=e=>{if(e.target.files.length)process(e.target.files[0])};
+function fmtSz(b){return b<1024?b+"B":b<1048576?(b/1024).toFixed(1)+"KB":(b/1048576).toFixed(1)+"MB"}
+function err(m){er.textContent=m;er.classList.add("show");lo.classList.remove("show");rs.classList.remove("show")}
+function process(f){
+const ext=f.name.split(".").pop().toLowerCase();
+if(!["bin","log","ulg"].includes(ext)){err("不支持的格式:."+ext);return}
+er.classList.remove("show");
+document.getElementById("fileName").textContent=f.name;
+document.getElementById("fileSize").textContent=fmtSz(f.size);
+document.getElementById("fileType").textContent=ext.toUpperCase();
+fx.classList.add("show");lo.classList.add("show");rs.classList.remove("show");
+const r=new FileReader();
+r.onload=function(e){
+try{
+if(ext==="bin"||ext==="log")parseBin(e.target.result);
+else parseULog(e.target.result);
+}catch(err){err("解析失败:"+err.message)}
+};
+r.onerror=()=>err("文件读取失败");
+r.readAsArrayBuffer(f);
+}
+function parseBin(buf){
+const v=new DataView(buf),att=[],bat=[],alt=[];
+let off=0,magic=v.getUint8(0);
+if(magic===0xd0){
+const nt=v.getUint16(1,true);off=3;
+const types=[];
+for(let i=0;i<nt&&off+11<=buf.byteLength;i++){
+types.push({bt:v.getInt32(off,true),nm:v.getUint8(off+4),sz:v.getUint8(off+10)});off+=11}
+while(off+12<=buf.byteLength){
+const ti=v.getInt32(off,true),ts=v.getBigUint64(off+4,true),sz=types[ti]?types[ti].sz:0;
+off+=12;
+if(ti<0||ti>=types.length||!sz)break;
+const pl=new Uint8Array(buf,off,sz);off+=sz;
+if(pl.length<sz)break;
+const pv=new DataView(pl.buffer);
+if(ti===0&&sz>=12){const r=pv.getFloat32(0,true),p=pv.getFloat32(4,true),ya=pv.getFloat32(8,true);att.push({t:Number(ts)/1e6,r,p,ya})}
+if(ti===3&&sz>=14){const vl=pv.getUint16(0,true)/1000;bat.push({t:Number(ts)/1e6,v:vl})}
+if(ti===4&&sz>=12){const al=pv.getInt32(0,true)/1000;alt.push({t:Number(ts)/1e6,a:al>0?al:0})}
+}}else{
+while(off+2<buf.byteLength){
+const ml=v.getUint8(off),mi=v.getUint8(off+1);off+=2;
+const pl=new Uint8Array(buf,off,ml);off+=ml;off+=2;
+if(mi===30&&pl.length>=12){const pv=new DataView(pl.buffer);att.push({t:0,r:pv.getFloat32(0,true),p:pv.getFloat32(4,true),ya:pv.getFloat32(8,true)})}
+}
+}
+if(att.length===0&&bat.length===0){err("未能解析到有效数据。请使用真实的APM飞行日志(.bin或.log)获取最佳效果。");return}
+parsedData={att,bat,alt};showResults()}
+function parseULog(buf){
+err("ULog详细解析需要服务端支持。请使用Streamlit版本获取完整功能。本页面提供基础.bin/.log解析。");lo.classList.remove("show")}
+function showResults(){
+lo.classList.remove("show");rs.classList.add("show");
+const dur=parsedData.att.length>1?(parsedData.att[parsedData.att.length-1].t-parsedData.att[0].t).toFixed(1):"0";
+const ma=parsedData.alt.length>0?Math.max(...parsedData.alt.map(a=>a.a)).toFixed(1):"0";
+const mv=parsedData.bat.length>0?Math.min(...parsedData.bat.map(b=>b.v)).toFixed(2):"0";
+document.getElementById("statsGrid").innerHTML=`
+<div class="stat-card"><div class="stat-label">飞行时长</div><div class="stat-value">${dur}<span class="stat-unit">秒</span></div></div>
+<div class="stat-card"><div class="stat-label">姿态采样</div><div class="stat-value">${parsedData.att.length}</div></div>
+<div class="stat-card"><div class="stat-label">最大高度</div><div class="stat-value">${ma}<span class="stat-unit">米</span></div></div>
+<div class="stat-card"><div class="stat-label">最低电压</div><div class="stat-value">${mv}<span class="stat-unit">V</span></div></div>`;
+destroyCharts();
+if(parsedData.att.length>0){
+new Chart(document.getElementById("attitudeChart"),{type:"line",data:{labels:parsedData.att.map(a=>a.t.toFixed(1)),datasets:[{label:"滚转(度)",data:parsedData.att.map(a=>a.r),borderColor:"#e53935",tension:.1},{label:"俯仰(度)",data:parsedData.att.map(a=>a.p),borderColor:"#1a73e8",tension:.1},{label:"偏航(度)",data:parsedData.att.map(a=>a.ya),borderColor:"#43A047",tension:.1}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:"时间(秒)"}}}}})}
+if(parsedData.bat.length>0){
+new Chart(document.getElementById("voltageChart"),{type:"line",data:{labels:parsedData.bat.map(b=>b.t.toFixed(1)),datasets:[{label:"电压(V)",data:parsedData.bat.map(b=>b.v),borderColor:"#FF9800",backgroundColor:"rgba(255,152,0,.1)",fill:true,tension:.1}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:"时间(秒)"}}}}})}
+if(parsedData.alt.length>0){
+new Chart(document.getElementById("altitudeChart"),{type:"line",data:{labels:parsedData.alt.map(a=>a.t.toFixed(1)),datasets:[{label:"高度(m)",data:parsedData.alt.map(a=>a.a),borderColor:"#9C27B0",backgroundColor:"rgba(156,39,176,.1)",fill:true,tension:.1}]},options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:"时间(秒)"}}}}})}
+}
+function destroyCharts(){Object.values(charts).forEach(c=>c.destroy());charts={}}
+document.getElementById("exportBtn").onclick=function(){
+if(!parsedData)return;let csv="时间,滚转,俯仰,偏航\n";
+parsedData.att.forEach(a=>csv+=a.t.toFixed(2)+","+a.r.toFixed(2)+","+a.p.toFixed(2)+","+a.ya.toFixed(2)+"\n");
+const b=new Blob(["\uFEFF"+csv],{type:"text/csv;charset=utf-8"}),u=URL.createObjectURL(b);
+const a=document.createElement("a");a.href=u;a.download="飞行数据.csv";a.click();URL.revokeObjectURL(u)};
+</script>
+</body>
+</html>
